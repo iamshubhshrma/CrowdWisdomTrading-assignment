@@ -84,15 +84,16 @@ ACTORS = {
     "lihkg": os.getenv("APIFY_ACTOR_LIHKG", "claude_code_reviewer/lihkg-scraper-en"),   # id PJDFRxJdpPknN9nYn
     # Public Telegram channels (t.me/s preview) -> messages with views + channel subscriber count
     "telegram": os.getenv("APIFY_ACTOR_TELEGRAM", "automation-lab/telegram-scraper"),  # id wxRoaBWQSXNzpVH1D
-    # Naver 종목토론실 -> posts with views / likes / dislikes / holder-verified flag
-    "naver": os.getenv("APIFY_ACTOR_NAVER", "hgservices/naver-stock-discussion-scraper"),  # id xXFbG2oX6UpaPtcTC
+    # Naver 종목토론실 -> official Apify generic scraper on Naver's discussion JSON API (views/likes/holder flag)
+    "naver": os.getenv("APIFY_ACTOR_NAVER", "apify/cheerio-scraper"),
     # Daum 토론방 -> official Apify generic scraper hitting Daum's public JSON endpoint
     "daum": os.getenv("APIFY_ACTOR_DAUM", "apify/cheerio-scraper"),
 }
 
 # Public HK finance Telegram channels to scan (messages filtered by the asset keywords).
+# Verify with: uv run python -m hsi_sentiment telegram-check
 TELEGRAM_CHANNELS = tuple(
     c.strip() for c in os.getenv(
-        "TELEGRAM_CHANNELS", "aastocks_news,hkej_news,wallstreetcn,hkstockcn,cls_telegraph"
+        "TELEGRAM_CHANNELS", "rthk_new_c,StockIntelligenceNews,StockIntelligence"
     ).split(",") if c.strip()
 )

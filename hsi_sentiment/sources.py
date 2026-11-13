@@ -79,14 +79,19 @@ def _since(days: int) -> datetime:
 
 
 # --- LIHKG (HK) ------------------------------------------------------------
+SIMPLIFIED = {"腾讯", "美团", "汇丰"}
+LIHKG_ALIASES = {"0700.HK": ("鵝廠",), "1810.HK": ("雷軍",), "0005.HK": ()}
 def lihkg_input(ex: Exchange, days: int) -> dict:
-    kws = [kw for a in ex.assets for kw in a.keywords[:2]]  # local-language names are what LIHKG users write
+    # LIHKG users write Traditional Chinese names / nicknames, rarely codes
+    kws = [kw for a in ex.assets for kw in (a.keywords + LIHKG_ALIASES.get(a.ticker, ()))
+           if not (kw.isdigit() or kw.startswith("$")) and kw not in SIMPLIFIED]
+    kws = list(dict.fromkeys(kws))  # actor rejects duplicates
     return {
         "mode": "search",
         "keywords": kws,
         "order": "desc_create_time",
         "dateFrom": f"{days}d",
-        "maxItems": 150,
+        "maxItems": 40,  # per keyword; ~$0.002/thread
         "proxyConfiguration": {"useApifyProxy": True},
     }
 
@@ -116,7 +121,7 @@ def telegram_input(ex: Exchange, days: int) -> dict:
     return {
         "channels": list(config.TELEGRAM_CHANNELS),
         "lastNDays": days,
-        "maxMessages": 500,
+        "maxMessages": 300,
         "keywords": [kw for a in ex.assets for kw in a.keywords],
         "includeChannelInfo": True,
     }
@@ -148,12 +153,51 @@ def telegram_normalize(items: list[dict], ex: Exchange) -> list[dict]:
     return out
 
 
-# --- Naver 종목토론실 (KR) ---------------------------------------------------
+# --- Naver 종목토론실 (KR) — official apify/cheerio-scraper on Naver's discussion JSON API ---
+# (a per-post-priced Store actor can't cover 10 days of Samsung chatter, ~100 posts/hour, affordably)
+NAVER_API = ("https://m.stock.naver.com/front-api/discussion/list?discussionType=domesticStock"
+             "&itemCode={code}&pageSize=100&isHolderOnly=false&excludesItemNews=false&isItemNewsOnly=false")
+
+NAVER_PAGE_FUNCTION = r"""
+async function pageFunction(context) {
+    const { request, json, body } = context;
+    const data = json || JSON.parse(body.toString());
+    const res = data.result || {};
+    const posts = res.posts || [];
+    const cutoff = new Date(request.userData.cutoff).getTime();
+    let oldest = Date.now();
+    const out = [];
+    for (const p of posts) {
+        const t = new Date(p.writtenAt + '+09:00').getTime();
+        oldest = Math.min(oldest, t);
+        if (t < cutoff) continue;
+        out.push({ postId: p.id, code: request.userData.code, writtenAt: p.writtenAt, title: p.title,
+            text: p.contentSwReplacedButImg, likes: p.recommendCount, dislikes: p.notRecommendCount,
+            views: p.viewCount, author: (p.writer || {}).nickname, isHolderVerified: p.isHolderVerified,
+            replyDepth: p.replyDepth });
+    }
+    const page = request.userData.page;
+    if (posts.length && oldest >= cutoff && res.lastOffset && page < request.userData.maxPages) {
+        const base = request.url.replace(/&offset=[^&]*/, '');
+        await context.enqueueRequest({ url: base + '&offset=' + res.lastOffset,
+            userData: { ...request.userData, page: page + 1 } });
+    }
+    return out;
+}
+"""
+
+
 def naver_input(ex: Exchange, days: int) -> dict:
+    cutoff = _since(days).isoformat()
     return {
-        "stocks": [a.code for a in ex.assets],
-        "dateFrom": (_since(days) + timedelta(hours=9)).strftime("%Y-%m-%d"),
-        "maxResults": 400,
+        "startUrls": [{"url": NAVER_API.format(code=a.code),
+                       "userData": {"code": a.code, "page": 1, "cutoff": cutoff, "maxPages": 300}}
+                      for a in ex.assets],
+        "pageFunction": NAVER_PAGE_FUNCTION,
+        "additionalMimeTypes": ["application/json"],
+        "proxyConfiguration": {"useApifyProxy": True},
+        "maxConcurrency": 5,
+        "maxRequestsPerCrawl": 2000,  # hard stop on runaway pagination
     }
 
 
@@ -161,17 +205,18 @@ def naver_normalize(items: list[dict], ex: Exchange) -> list[dict]:
     by_code = {a.code: a for a in ex.assets}
     out = []
     for it in items:
-        if it.get("type") != "post" or it.get("stockCode") not in by_code:
+        code = it.get("code") or it.get("stockCode")
+        if code not in by_code:
             continue
-        a = by_code[it["stockCode"]]
         out.append(dict(
-            post_id=f"naver:{it.get('postId')}", source="naver", exchange=ex.key, ticker=a.ticker,
+            post_id=f"naver:{it.get('postId')}", source="naver", exchange=ex.key, ticker=by_code[code].ticker,
             ts_utc=_to_utc(it.get("writtenAt"), ex.tz),
             text=" ".join(filter(None, [it.get("title"), it.get("text")])),
             likes=_num(it.get("likes")), dislikes=_num(it.get("dislikes")), replies=0.0,
             views=_num(it.get("views")), author=it.get("author"),
             # Naver exposes no follower count; holder-verified authors get a credibility boost instead
-            author_followers=10.0 if it.get("isHolderVerified") else 0.0, url=it.get("url"),
+            author_followers=10.0 if it.get("isHolderVerified") else 0.0,
+            url=f"https://stock.naver.com/domestic/stock/{code}/discussion",
         ))
     return out
 
@@ -211,6 +256,7 @@ def daum_input(ex: Exchange, days: int) -> dict:
         "additionalMimeTypes": ["application/json"],
         "proxyConfiguration": {"useApifyProxy": True},
         "maxConcurrency": 5,
+        "maxRequestsPerCrawl": 2000,  # hard stop on runaway pagination
     }
 
 

@@ -24,14 +24,38 @@ Useful flags: `--exchanges HKEX`, `--days 30` (more walk-forward history), `--no
 
 | Source | Actor | Actor ID | Input (built in `hsi_sentiment/sources.py`) |
 |---|---|---|---|
-| LIHKG | `claude_code_reviewer/lihkg-scraper-en` | `PJDFRxJdpPknN9nYn` | `mode: search`, local-language name keywords, `dateFrom: 10d` |
-| Telegram | `automation-lab/telegram-scraper` | `wxRoaBWQSXNzpVH1D` | `channels`, `lastNDays: 10`, ticker `keywords`, `includeChannelInfo` (gives subscriber counts) |
-| Naver 종목토론실 | `hgservices/naver-stock-discussion-scraper` | `xXFbG2oX6UpaPtcTC` | `stocks: [005930, …]`, `dateFrom` |
-| Daum 토론방 | `apify/cheerio-scraper` (official) | – | Daum's public JSON endpoint `finance.daum.net/content/debates/A{code}` + custom `pageFunction` that paginates back 10 days |
+| LIHKG | `claude_code_reviewer/lihkg-scraper-en` | `PJDFRxJdpPknN9nYn` | `mode: search`, Traditional-Chinese / English name keywords, `dateFrom: 10d`, `maxItems: 40` per keyword |
+| Telegram | `automation-lab/telegram-scraper` | `wxRoaBWQSXNzpVH1D` | `channels: [rthk_new_c, StockIntelligenceNews, StockIntelligence]`, `lastNDays: 10`, ticker `keywords`, `includeChannelInfo` (subscriber counts) |
+| Naver 종목토론실 | `apify/cheerio-scraper` (official) | `YrQuEkowkNCLdk4j2` | Naver's discussion JSON API `m.stock.naver.com/front-api/discussion/list?itemCode={code}&pageSize=100`, custom `pageFunction` that follows the `offset` cursor back 10 days (max 300 pages per stock) |
+| Daum 토론방 | `apify/cheerio-scraper` (official) | `YrQuEkowkNCLdk4j2` | Daum's public JSON endpoint `finance.daum.net/content/debates/A{code}`, custom `pageFunction` that paginates back 10 days |
 
-Every run writes the exact actor ID, input and raw dataset items to `data/raw/<date>/<EXCHANGE>_<source>.json`. Actor IDs can be overridden through env vars (see `.env.example`). Each run's spend is capped by `APIFY_MAX_CHARGE_USD`.
+Every run writes the exact actor ID, input and raw dataset items to `data/raw/<date>/<EXCHANGE>_<source>.json`. Actor IDs can be overridden through env vars (see `.env.example`).
 
-> The Telegram channel list (`TELEGRAM_CHANNELS`) is configurable. Check that the defaults are still active public channels before a live run, because channels rename or go private.
+- **Permissions:** `apify/cheerio-scraper` needs a one-time permission approval in the Apify console before its first run.
+- **Why cheerio for Naver:** Naver is scraped with cheerio rather than a per-post-priced Store actor. Samsung and SK Hynix get about 4–5k posts a day, so 10 days through a per-post actor would cost tens of dollars. Through cheerio it costs cents of compute.
+- **Checking Telegram:** `uv run python -m hsi_sentiment telegram-check [channels…]` verifies Telegram channels with one cheap call. It prints subscribers, messages in the last 10 days, ticker hits and the last post time.
+
+## Live run (2026-11-13)
+
+`output/report.html` is the report from the live run.
+
+| Exchange | Posts | By source | News (Exa) |
+|---|---|---|---|
+| HKEX | 347 | LIHKG 18 threads · Telegram ~330 messages | 50 |
+| KRX | 72,783 | Naver 72,524 · Daum 259 | 50 |
+
+Walk-forward out-of-sample results (20 predictions per exchange):
+
+| Exchange | Model | MAPE | Direction hit rate |
+|---|---|---|---|
+| HKEX | Price + sentiment | 2.20% | 55% |
+| HKEX | Price-only | 2.23% | 70% |
+| HKEX | Random walk | 2.27% | – |
+| KRX | Price + sentiment | 2.43% | 55% |
+| KRX | Price-only | 2.40% | 55% |
+| KRX | Random walk | 2.45% | – |
+
+Sentiment gives a marginal gain on HKEX error and none on KRX. With this sample size the honest reading is "no proven edge yet". That is why the deployed forecast is gated on out-of-sample performance.
 
 ## How it works
 
@@ -64,6 +88,9 @@ Exa search  ──► news per ticker ──────────────
 ## Limitations
 
 - 10 days of sentiment covers about 7 trading sessions, so the walk-forward has only a few test sessions per exchange. Treat the metrics as a sanity check, not proof of an edge. `--days 30` gives a more meaningful test.
+- Samsung and SK Hynix reach the 300-page (30k-post) Naver cap and cover the last 7–8 days instead of 10. The oldest heatmap cells for those two hold only a handful of posts.
+- Retail traders rarely discuss these names in LIHKG thread titles (about 18 threads in 10 days), and most active HK Telegram chatter is in private groups. HKEX volume is therefore thin and leans on news-style channels.
 - Naver and Daum don't expose follower counts. Naver's holder-verified flag is used as the credibility signal instead, and LIHKG uses author level.
+- The lexicon scores a large share of Korean board posts (memes, off-topic) as neutral, which pulls the average sentiment towards 0.
 - Demo mode (`--demo`) generates synthetic text on top of real prices. Its scores mean nothing and the report is stamped accordingly.
 - This is research output, not investment advice.
