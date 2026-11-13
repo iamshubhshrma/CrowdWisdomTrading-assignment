@@ -1,0 +1,28 @@
+[project]
+name = "hsi-sentiment"
+version = "0.1.0"
+description = "HK + KR retail social sentiment -> n+1 price prediction pipeline (Apify + Exa)"
+requires-python = ">=3.12"
+dependencies = [
+    "apify-client>=3.5.1",
+    "exa-py>=2.28.0",
+    "numpy>=2.5.4",
+    "pandas>=3.1.1",
+    "plotly>=7.1.0",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
+    "scikit-learn>=1.9.1",
+    "yfinance>=1.8.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[project.optional-dependencies]
+hf = ["transformers>=4.40", "torch>=2.2"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
